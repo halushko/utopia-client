@@ -71,7 +71,10 @@ func prepareTorrentInfoMessage(torrent *entities.Torrent) string {
 	line.WriteString("Переклад: ")
 	translate := ""
 	for _, audio := range torrent.File.Audio {
-		if audio.Studio != "" {
+		if audio.Language == "Ukrainian" && audio.Studio != "" {
+			if strings.Contains(translate, audio.Studio) {
+				continue
+			}
 			if translate != "" {
 				translate = translate + " | "
 			}

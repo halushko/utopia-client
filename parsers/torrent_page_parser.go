@@ -238,12 +238,16 @@ func fillAudioValues(audio *entities.Audio, line string) {
 		}
 	} else if isPresent, value = getValue(line, "Title"); isPresent {
 		audio.Title = value
-		parts := strings.Split(line, "|")
+		parts := strings.Split(value, "|")
 		if len(parts) > 0 {
 			studio := strings.TrimSpace(parts[len(parts)-1])
 			if !strings.HasSuffix(studio, "bps") {
-				audio.Studio = studio
+				if audio.Format != "" {
+					formatParts := strings.Split(audio.Format, " ")
+					studio = strings.SplitN(studio, formatParts[0], 2)[0]
+				}
 			}
+			audio.Studio = strings.TrimSpace(studio)
 		}
 	}
 }
