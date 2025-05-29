@@ -4,7 +4,7 @@ go 1.24.3
 
 require (
 	github.com/PuerkitoBio/goquery v1.10.3
-	github.com/halushko/kino-cat-core-go v0.0.0-20250107134440-c4a6636370ba
+	github.com/halushko/kino-cat-core-go v0.0.0-20250215184410-75b3138c2fc7
 )
 
 require (
