@@ -50,8 +50,7 @@ func getTorrentFile(torrentIdStr string) bool {
 		return false
 	}
 
-	//dstDir := "/foo/bar"
-	dstDir := "."
+	dstDir := "/root/torrent_files"
 	filePath := filepath.Join(dstDir, fmt.Sprintf("%d.torrent", torrentId))
 	outFile, err := os.Create(filePath)
 	if err != nil {
