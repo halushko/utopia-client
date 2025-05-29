@@ -1,4 +1,4 @@
-FROM golang:1.24.3 AS builder
+FROM golang:1.23.2 AS builder
 WORKDIR /app
 RUN go mod init utopia-client
 COPY . .
