@@ -1,22 +1,23 @@
-// auth.go
 package page_navigator
 
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 )
 
 type Client struct {
-	loginClient  *http.Client
-	scrapeClient *http.Client
+	loginClient    *http.Client
+	navigateClient *http.Client
 }
 
 var c *Client
@@ -39,10 +40,47 @@ func newClient() (*Client, error) {
 		},
 	}
 	scrape := &http.Client{Jar: jar}
-	return &Client{loginClient: login, scrapeClient: scrape}, nil
+	return &Client{loginClient: login, navigateClient: scrape}, nil
 }
 
-func Login() error {
+func setHeaders(req *http.Request) {
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT; Win64; x64)")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Referer", "https://utp.to/login")
+}
+
+func GET(pageURL string) ([]byte, error) {
+	return get(pageURL, 2)
+}
+
+func get(pageURL string, tryCount int) ([]byte, error) {
+	req, err := http.NewRequest("GET", pageURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	setHeaders(req)
+
+	resp, err := getClient().Do(req)
+	if err != nil {
+		if tryCount == 0 {
+			return nil, fmt.Errorf("не вдалося залогінитися на Utopia")
+		}
+		time.Sleep(4 * time.Second)
+		return get(pageURL, tryCount-1)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to fetch page%s: status %s", pageURL, resp.Status)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	return body, nil
+}
+
+func login() error {
 	client, err := newClient()
 	if err != nil {
 		log.Fatalf("Init error: %v", err)
@@ -79,9 +117,8 @@ func Login() error {
 	if err != nil {
 		return err
 	}
+	setHeaders(req)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT; Win64; x64)")
-	req.Header.Set("Referer", loginURL)
 
 	resp, err := c.loginClient.Do(req)
 	if err != nil {
@@ -90,6 +127,8 @@ func Login() error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusFound && resp.StatusCode != http.StatusOK {
+		a, _ := io.ReadAll(resp.Body)
+		print(string(a))
 		return fmt.Errorf("login failed: status %s", resp.Status)
 	}
 
@@ -102,11 +141,11 @@ func Login() error {
 	return errors.New("login failed: session cookie not found")
 }
 
-func HTTP() *http.Client {
+func getClient() *http.Client {
 	if c == nil {
-		if err := Login(); err != nil {
+		if err := login(); err != nil {
 			log.Fatalf("Init error: %v", err)
 		}
 	}
-	return c.scrapeClient
+	return c.navigateClient
 }

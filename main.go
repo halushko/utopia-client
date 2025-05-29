@@ -1,27 +1,15 @@
-// main.go
 package main
 
 import (
-	"fmt"
-	"log"
-	"strconv"
-
-	"utopia-client/page_navigator"
+	"github.com/halushko/kino-cat-core-go/logger_helper"
+	"utopia-client/listeners"
 )
 
 func main() {
-	id, err := strconv.Atoi("16242")
-	if err != nil {
-		log.Fatalf("Invalid torrent ID: %v", err)
-	}
+	logger_helper.SoftPrepareLogFile()
 
-	if err := page_navigator.Login(); err != nil {
-		log.Fatalf("Login error: %v", err)
-	}
+	listeners.GetTorrentFromUtopia()
+	listeners.DownloadUtopiaTorrent()
 
-	html, err := page_navigator.GetTorrentPage(id)
-	if err != nil {
-		log.Fatalf("Fetch error: %v", err)
-	}
-	fmt.Println(html[:800])
+	select {}
 }
