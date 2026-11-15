@@ -44,6 +44,11 @@ type Audio struct {
 }
 
 type Media struct {
+	VideoCodec         string `json:"video_codec,omitempty"`
+	Width              string `json:"width,omitempty"`
+	Height             string `json:"height,omitempty"`
+	VideoBitRate       string `json:"video_bit_rate,omitempty"`
+	HDRFormat          string `json:"hdr_format,omitempty"`
 	Format             string `json:"format"`
 	FormatVersion      string `json:"format_version"`
 	OverallBitRateMode string `json:"overall_bit_rate_mode"`
@@ -53,6 +58,8 @@ type Media struct {
 }
 
 type SimilarTorrent struct {
+	Season          *int      `json:"season,omitempty"`
+	Episode         *int      `json:"episode,omitempty"`
 	ID              int       `json:"id"`              // Идентификатор :contentReference[oaicite:13]{index=13}
 	Title           string    `json:"title"`           // Название :contentReference[oaicite:14]{index=14}
 	URL             string    `json:"url"`             // Ссылка на страницу

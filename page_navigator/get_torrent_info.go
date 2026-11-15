@@ -6,6 +6,9 @@ import (
 )
 
 func GetTorrentPage(id int) (string, error) {
+	if id <= 0 {
+		return "", fmt.Errorf("invalid torrent ID")
+	}
 	pageURL := fmt.Sprintf("https://utp.to/torrents/%d", id)
 	body, err := GET(pageURL)
 	if err != nil {

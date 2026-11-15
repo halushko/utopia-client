@@ -4,12 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -21,6 +21,7 @@ type Client struct {
 }
 
 var c *Client
+var clientMu sync.Mutex
 var base = "https://utp.to"
 
 var user = os.Getenv("UTP_USER")
@@ -34,12 +35,13 @@ func newClient() (*Client, error) {
 		return nil, err
 	}
 	login := &http.Client{
-		Jar: jar,
+		Timeout: 30 * time.Second,
+		Jar:     jar,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
-	scrape := &http.Client{Jar: jar}
+	scrape := &http.Client{Jar: jar, Timeout: 30 * time.Second}
 	return &Client{loginClient: login, navigateClient: scrape}, nil
 }
 
@@ -60,7 +62,11 @@ func get(pageURL string, tryCount int) ([]byte, error) {
 	}
 	setHeaders(req)
 
-	resp, err := getClient().Do(req)
+	client, err := getClient()
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		if tryCount == 0 {
 			return nil, fmt.Errorf("не вдалося залогінитися на Utopia")
@@ -77,18 +83,23 @@ func get(pageURL string, tryCount int) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	doc, parseErr := goquery.NewDocumentFromReader(strings.NewReader(string(body)))
+	if parseErr == nil && doc.Find(`input[type="password"], form[action$="/login"]`).Length() > 0 {
+		clientMu.Lock()
+		c = nil
+		clientMu.Unlock()
+		return nil, errors.New("UTOPIA authentication required")
+	}
 	return body, nil
 }
 
 func login() error {
 	client, err := newClient()
 	if err != nil {
-		log.Fatalf("Init error: %v", err)
 		return err
 	}
-	c = client
 
-	res, err := c.loginClient.Get(loginURL)
+	res, err := client.loginClient.Get(loginURL)
 	if err != nil {
 		return err
 	}
@@ -120,32 +131,33 @@ func login() error {
 	setHeaders(req)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := c.loginClient.Do(req)
+	resp, err := client.loginClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusFound && resp.StatusCode != http.StatusOK {
-		a, _ := io.ReadAll(resp.Body)
-		print(string(a))
 		return fmt.Errorf("login failed: status %s", resp.Status)
 	}
 
 	u, _ := url.Parse(base)
-	for _, ck := range c.loginClient.Jar.Cookies(u) {
+	for _, ck := range client.loginClient.Jar.Cookies(u) {
 		if ck.Name == "laravel_session" {
+			c = client
 			return nil
 		}
 	}
 	return errors.New("login failed: session cookie not found")
 }
 
-func getClient() *http.Client {
+func getClient() (*http.Client, error) {
+	clientMu.Lock()
+	defer clientMu.Unlock()
 	if c == nil {
 		if err := login(); err != nil {
-			log.Fatalf("Init error: %v", err)
+			return nil, fmt.Errorf("UTOPIA login: %w", err)
 		}
 	}
-	return c.navigateClient
+	return c.navigateClient, nil
 }
