@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -17,6 +18,9 @@ func ParseTorrentPage(id int, html string) (*entities.Torrent, error) {
 
 	t := &entities.Torrent{ID: id}
 	t.Title = getTitle(doc)
+	if t.Title == "" {
+		return nil, fmt.Errorf("torrent release title missing: unexpected or unauthenticated page")
+	}
 	t.Description = getDescription(doc)
 	//t.Size = getSize(doc)
 	t.Category = getCategory(doc)
@@ -47,12 +51,15 @@ func ParseTorrentPage(id int, html string) (*entities.Torrent, error) {
 	t.SimilarId = getSimilar(doc)
 
 	t.File.Media, t.File.Audio = getMediaAudioInfo(doc)
+	if quality := strings.TrimSpace(doc.Find(".torrent__resolution-link").First().Text()); quality != "" {
+		t.File.Media.Resolution = quality
+	}
 
 	return t, nil
 }
 
 func getTitle(doc *goquery.Document) string {
-	return regexp.MustCompile(`\s+`).ReplaceAllString(strings.TrimSpace(doc.Find("h1.meta__title").Text()), " ")
+	return regexp.MustCompile(`\s+`).ReplaceAllString(strings.TrimSpace(doc.Find("h1.torrent__name").First().Text()), " ")
 }
 
 func getDescription(doc *goquery.Document) string {
@@ -82,36 +89,38 @@ func getGenres(doc *goquery.Document) []string {
 }
 
 func getPrimaryLanguage(doc *goquery.Document) string {
-	return strings.TrimSpace(doc.Find("article.meta__language").Find("h3.meta-chip__value").Text())
+	if value := strings.TrimSpace(doc.Find(".work__language-link").First().Text()); value != "" {
+		return value
+	}
+	return strings.TrimSpace(doc.Find("article.meta__language h3.meta-chip__value").First().Text())
 }
 
 func getFiles(doc *goquery.Document) (string, []string, []string) {
-	files := make([]string, 0)
-	sizes := make([]string, 0)
-	mainFileName := ""
-	i := -1
-	isName := true
-	fromPageSrc := doc.Find("li.form__group").Find("div.dialog__form").Text()
-
-	for _, line := range strings.Split(fromPageSrc, "\n") {
-		tmp := strings.TrimSpace(line)
-		if tmp != "" {
-			i++
-			if i > 2 {
-				switch {
-				case isName:
-					files = append(files, tmp)
-					isName = false
-				default:
-					sizes = append(sizes, tmp)
-					isName = true
-				}
-			} else if isName && mainFileName == "" {
-				mainFileName = tmp
-			}
+	files, sizes := []string{}, []string{}
+	// The flat list preserves full paths and excludes folder summary rows.
+	doc.Find(`dialog [data-tab="list"] tbody tr`).Each(func(_ int, row *goquery.Selection) {
+		cells := row.ChildrenFiltered("td")
+		if cells.Length() != 3 {
+			return
+		}
+		name := strings.TrimSpace(cells.Eq(1).Text())
+		if name == "" {
+			return
+		}
+		files = append(files, name)
+		sizes = append(sizes, strings.TrimSpace(cells.Eq(2).Text()))
+	})
+	name := ""
+	for _, line := range strings.Split(doc.Find(`code[x-ref="mediainfo"]`).First().Text(), "\n") {
+		if ok, value := getValue(strings.TrimSpace(line), "Complete name"); ok {
+			name = value
+			break
 		}
 	}
-	return mainFileName, files, sizes
+	if name == "" && len(files) == 1 {
+		name = files[0]
+	}
+	return name, files, sizes
 }
 
 func getSimilar(doc *goquery.Document) string {
@@ -129,7 +138,7 @@ func getMediaAudioInfo(doc *goquery.Document) (*entities.Media, []entities.Audio
 	audio := make([]entities.Audio, 0)
 	media := entities.Media{}
 
-	row := doc.Find("code[x-ref=\"mediainfo\"]").Text()
+	row := doc.Find("code[x-ref=\"mediainfo\"]").First().Text()
 	GENERAL := 1
 	VIDEO := 2
 	AUDIO := 3
@@ -137,7 +146,7 @@ func getMediaAudioInfo(doc *goquery.Document) (*entities.Media, []entities.Audio
 	for _, line := range strings.Split(row, "\n") {
 		tmp := strings.TrimSpace(line)
 		if tmp != "" {
-			if strings.HasPrefix(tmp, "Text") {
+			if strings.HasPrefix(tmp, "Text") || tmp == "Menu" || tmp == "Image" || tmp == "Other" {
 				break
 			} else if strings.HasPrefix(tmp, "Video") {
 				section = VIDEO
@@ -180,6 +189,21 @@ func fillGeneralValues(media *entities.Media, line string) {
 }
 
 func fillVideoValues(media *entities.Media, line string) {
+	if ok, value := getValue(line, "Format"); ok {
+		media.VideoCodec = value
+	}
+	if ok, value := getValue(line, "Width"); ok {
+		media.Width = value
+	}
+	if ok, value := getValue(line, "Height"); ok {
+		media.Height = value
+	}
+	if ok, value := getValue(line, "Bit rate"); ok {
+		media.VideoBitRate = value
+	}
+	if ok, value := getValue(line, "HDR format"); ok {
+		media.HDRFormat = value
+	}
 	isPresent := false
 	value := ""
 	if isPresent, value = getValue(line, "Height"); isPresent {
@@ -238,28 +262,35 @@ func fillAudioValues(audio *entities.Audio, line string) {
 		}
 	} else if isPresent, value = getValue(line, "Title"); isPresent {
 		audio.Title = value
-		parts := strings.Split(value, "|")
-		if len(parts) > 0 {
-			studio := strings.TrimSpace(parts[len(parts)-1])
-			if !strings.HasSuffix(studio, "bps") {
-				if audio.Format != "" {
-					formatParts := strings.Split(audio.Format, " ")
-					studio = strings.SplitN(studio, formatParts[0], 2)[0]
-				}
-			}
-			audio.Studio = strings.TrimSpace(studio)
-		}
+		audio.Studio = studioFromTitle(value)
 	}
 }
 
-func getValue(line string, prefix string) (bool, string) {
-	if strings.HasPrefix(line, prefix) {
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) == 2 {
-			return true, strings.TrimSpace(parts[1])
-		} else {
-			return true, "Не вказано"
-		}
+func getValue(line string, key string) (bool, string) {
+	parts := strings.SplitN(line, ":", 2)
+	if len(parts) == 2 && strings.TrimSpace(parts[0]) == key {
+		return true, strings.TrimSpace(parts[1])
 	}
 	return false, ""
+}
+
+// A studio is accepted only in an explicit voice-over title. Generic audio
+// labels and bitrates are not studio names; unknown remains empty.
+func studioFromTitle(title string) string {
+	parts := strings.Split(title, "|")
+	if len(parts) < 2 {
+		return ""
+	}
+	hasVoiceType := false
+	for _, p := range parts[:len(parts)-1] {
+		switch strings.ToUpper(strings.TrimSpace(p)) {
+		case "MVO", "DVO", "VO", "DUB", "DUBBED", "AVO":
+			hasVoiceType = true
+		}
+	}
+	studio := strings.TrimSpace(parts[len(parts)-1])
+	if !hasVoiceType || studio == "" || regexp.MustCompile(`(?i)(bps|kb/s|mb/s|channels?|^\d+(?:\.\d+)?$)`).MatchString(studio) {
+		return ""
+	}
+	return studio
 }

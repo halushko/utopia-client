@@ -13,7 +13,7 @@ import (
 func DownloadUtopiaTorrent() {
 	processor := func(data []byte) {
 		log.Printf("[DownloadUtopiaTorrent] Отримано повідомлення з NATS: %s", string(data))
-		chatId, args, err := nats_helper.ParseNatsBotCommand(data)
+		chatId, args, err := parseCommand(data)
 		if err != nil {
 			log.Printf("[DownloadUtopiaTorrent] Проблема при парсингу повідомлення: %s", err)
 			return
@@ -41,8 +41,9 @@ func DownloadUtopiaTorrent() {
 
 func getTorrentFile(torrentIdStr string) bool {
 	torrentId, err := strconv.Atoi(torrentIdStr)
-	if err != nil {
-		log.Printf("[DownloadUtopiaTorrent] Invalid torrent ID: %v", err)
+	if err != nil || torrentId <= 0 {
+		log.Printf("[DownloadUtopiaTorrent] Invalid torrent ID")
+		return false
 	}
 	data, err := page_navigator.GetTorrentFile(torrentId)
 	if err != nil {
@@ -50,19 +51,39 @@ func getTorrentFile(torrentIdStr string) bool {
 		return false
 	}
 
-	dstDir := "/root/torrent_files"
-	filePath := filepath.Join(dstDir, fmt.Sprintf("%d.torrent", torrentId))
-	outFile, err := os.Create(filePath)
-	if err != nil {
-		log.Printf("[DownloadUtopiaTorrent] Не вдалось створити файл %s: %w", filePath, err)
+	if err := writeTorrentFile("/root/torrent_files", torrentId, data); err != nil {
+		log.Printf("[DownloadUtopiaTorrent] Не вдалось зберегти торрент: %v", err)
 		return false
 	}
-	defer outFile.Close()
-
-	if err := os.WriteFile(filePath, data, 0777); err != nil {
-		log.Printf("[DownloadUtopiaTorrent] Не вдалось створити файл %s: %v", filePath, err)
-		return false
-	}
-
 	return true
+}
+
+// Publish to the watched directory only after the complete file is closed.
+func writeTorrentFile(dir string, id int, data []byte) error {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	out, err := os.CreateTemp(dir, ".utopia-*.tmp")
+	if err != nil {
+		return err
+	}
+	name := out.Name()
+	defer os.Remove(name)
+	if _, err = out.Write(data); err != nil {
+		out.Close()
+		return err
+	}
+	// Match the existing shared-directory read access before publication.
+	if err = out.Chmod(0644); err != nil {
+		out.Close()
+		return err
+	}
+	if err = out.Sync(); err != nil {
+		out.Close()
+		return err
+	}
+	if err = out.Close(); err != nil {
+		return err
+	}
+	return os.Rename(name, filepath.Join(dir, fmt.Sprintf("%d.torrent", id)))
 }

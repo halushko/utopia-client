@@ -3,6 +3,7 @@ package listeners
 import (
 	"fmt"
 	"github.com/halushko/kino-cat-core-go/nats_helper"
+	"html"
 	"log"
 	"strconv"
 	"strings"
@@ -14,7 +15,7 @@ import (
 func GetTorrentFromUtopia() {
 	processor := func(data []byte) {
 		log.Printf("[GetTorrentFromUtopia] Отримано повідомлення з NATS: %s", string(data))
-		chatId, args, err := nats_helper.ParseNatsBotCommand(data)
+		chatId, args, err := parseCommand(data)
 		if err != nil {
 			log.Printf("[GetTorrentFromUtopia] Проблема при парсингу повідомлення: %s", err)
 			return
@@ -44,8 +45,9 @@ func GetTorrentFromUtopia() {
 
 func getTorrentInfo(torrentIdStr string) (*entities.Torrent, bool) {
 	torrentId, err := strconv.Atoi(torrentIdStr)
-	if err != nil {
-		log.Fatalf("[GetTorrentFromUtopia] Invalid torrent ID: %v", err)
+	if err != nil || torrentId <= 0 {
+		log.Printf("[GetTorrentFromUtopia] Invalid torrent ID")
+		return nil, false
 	}
 	page, err := page_navigator.GetTorrentPage(torrentId)
 	if err != nil {
@@ -63,11 +65,16 @@ func getTorrentInfo(torrentIdStr string) (*entities.Torrent, bool) {
 
 func prepareTorrentInfoMessage(torrent *entities.Torrent) string {
 	var line strings.Builder
-	line.WriteString(fmt.Sprintf("[%s] <b>%s</b>\n\n", torrent.Category, torrent.Title))
+	line.WriteString(fmt.Sprintf("[%s] <b>%s</b>\n\n", html.EscapeString(torrent.Category), html.EscapeString(torrent.Title)))
 	if torrent.FileCount > 0 {
 		line.WriteString(fmt.Sprintf("Файлів на закачку: %d. ", torrent.FileCount))
 	}
-	line.WriteString(fmt.Sprintf("%s -- %s -- %s\n", torrent.File.Size, torrent.File.Media.Resolution, torrent.File.Media.OverallBitRate))
+	resolution, bitrate := "Невідомо", "Невідомо"
+	if torrent.File.Media != nil {
+		resolution = torrent.File.Media.Resolution
+		bitrate = torrent.File.Media.OverallBitRate
+	}
+	line.WriteString(fmt.Sprintf("%s -- %s -- %s\n", html.EscapeString(torrent.File.Size), html.EscapeString(resolution), html.EscapeString(bitrate)))
 	line.WriteString("Переклад: ")
 	translate := ""
 	for _, audio := range torrent.File.Audio {
@@ -81,14 +88,16 @@ func prepareTorrentInfoMessage(torrent *entities.Torrent) string {
 			if audio.Default {
 				translate = translate + "✓"
 			}
-			translate = translate + fmt.Sprintf("%s", audio.Studio)
+			translate = translate + html.EscapeString(audio.Studio)
 		}
 	}
 	if translate == "" {
 		translate = "Невідомо"
 	}
 	line.WriteString(fmt.Sprintf("%s\n\n", translate))
-	line.WriteString(fmt.Sprintf("Схожі торенти: /utp_siml_%s\n", strings.Replace(torrent.SimilarId, ".", "_", -1)))
+	if torrent.SimilarId != "" {
+		line.WriteString(fmt.Sprintf("Схожі торенти: /utp_siml_%s\n", strings.ReplaceAll(torrent.SimilarId, ".", "_")))
+	}
 	line.WriteString(fmt.Sprintf("Скачати: /utp_dwnl_%d\n", torrent.ID))
 
 	return line.String()
